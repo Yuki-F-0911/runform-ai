@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AnalysisStatus, AnalysisResult } from './types';
+import { AnalysisStatus, AnalysisResult, RunnerLevel } from './types';
 import { analyzeRunningForm } from './services/geminiService';
 import MetricsChart from './components/MetricsChart';
 
@@ -10,10 +10,11 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<AnalysisResult[]>([]);
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Settings for analysis
   const [targetPace, setTargetPace] = useState<string>('');
   const [runnerDesc, setRunnerDesc] = useState<string>('');
+  const [runnerLevel, setRunnerLevel] = useState<RunnerLevel>(RunnerLevel.INTERMEDIATE);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -60,7 +61,7 @@ const App: React.FC = () => {
       reader.onloadend = async () => {
         const base64String = (reader.result as string).split(',')[1];
         try {
-          const analysisResult = await analyzeRunningForm(base64String, runnerDesc, targetPace);
+          const analysisResult = await analyzeRunningForm(base64String, runnerDesc, targetPace, runnerLevel);
           setResult(analysisResult);
           setHistory(prev => [analysisResult, ...prev]);
           setStatus(AnalysisStatus.COMPLETED);
@@ -98,14 +99,14 @@ const App: React.FC = () => {
           <i className="fas fa-history text-green-500"></i>
           <h2 className="font-bold text-slate-200">解析履歴</h2>
         </div>
-        
+
         <div className="space-y-3">
           {history.length === 0 ? (
             <p className="text-slate-500 text-sm italic text-center py-10">履歴はありません</p>
           ) : (
             history.map(item => (
-              <div 
-                key={item.id} 
+              <div
+                key={item.id}
                 onClick={() => { setResult(item); setStatus(AnalysisStatus.COMPLETED); }}
                 className={`p-3 rounded-xl border transition-all cursor-pointer group ${result?.id === item.id ? 'bg-green-500/10 border-green-500/50' : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'}`}
               >
@@ -151,7 +152,7 @@ const App: React.FC = () => {
                 </div>
                 <h2 className="text-xl font-bold mb-2">動画をアップロードして分析</h2>
                 <input type="file" accept="video/*" className="hidden" ref={fileInputRef} onChange={onFileSelect} />
-                <button 
+                <button
                   onClick={() => fileInputRef.current?.click()}
                   className="mt-4 px-8 py-3 bg-green-500 hover:bg-green-400 text-white font-bold rounded-xl transition-all shadow-lg shadow-green-500/20"
                 >
@@ -167,9 +168,9 @@ const App: React.FC = () => {
                   <div className="space-y-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 uppercase mb-2">分析対象のランナー（任意）</label>
-                      <input 
-                        type="text" 
-                        placeholder="例: 赤いシャツの人、右側の走者" 
+                      <input
+                        type="text"
+                        placeholder="例: 赤いシャツの人、右側の走者"
                         className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-green-500 transition-colors"
                         value={runnerDesc}
                         onChange={(e) => setRunnerDesc(e.target.value)}
@@ -178,9 +179,9 @@ const App: React.FC = () => {
                     <div>
                       <label className="block text-xs font-bold text-slate-500 uppercase mb-2">走行ペース（任意）</label>
                       <div className="flex items-center gap-2">
-                        <input 
-                          type="text" 
-                          placeholder="4:00" 
+                        <input
+                          type="text"
+                          placeholder="4:00"
                           className="w-32 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-green-500 transition-colors"
                           value={targetPace}
                           onChange={(e) => setTargetPace(e.target.value)}
@@ -188,7 +189,29 @@ const App: React.FC = () => {
                         <span className="text-slate-400 text-sm">min/km</span>
                       </div>
                     </div>
-                    <button 
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-2">ランナーレベル</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { val: RunnerLevel.BEGINNER, label: '初心者', icon: 'fa-seedling' },
+                          { val: RunnerLevel.INTERMEDIATE, label: '中級者', icon: 'fa-shoe-prints' },
+                          { val: RunnerLevel.ELITE, label: '上級者', icon: 'fa-medal' }
+                        ].map((level) => (
+                          <button
+                            key={level.val}
+                            onClick={() => setRunnerLevel(level.val)}
+                            className={`p-3 rounded-lg text-sm font-bold border transition-all flex flex-col items-center gap-1
+                              ${runnerLevel === level.val
+                                ? 'bg-green-500 text-white border-green-500 shadow-lg shadow-green-500/20'
+                                : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700 hover:text-white'}`}
+                          >
+                            <i className={`fas ${level.icon}`}></i>
+                            {level.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <button
                       onClick={handleStartAnalysis}
                       className="w-full py-4 bg-green-500 hover:bg-green-400 text-white font-bold rounded-xl transition-all"
                     >
@@ -278,7 +301,7 @@ const App: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {result.trainingSteps.map((step, idx) => (
                       <div key={idx} className="flex gap-3 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
-                        <span className="text-green-500 font-black text-sm">{idx+1}.</span>
+                        <span className="text-green-500 font-black text-sm">{idx + 1}.</span>
                         <p className="text-xs text-slate-300">{step}</p>
                       </div>
                     ))}

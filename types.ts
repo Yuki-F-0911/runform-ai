@@ -14,6 +14,12 @@ export interface FormObservation {
   advice: string;
 }
 
+export enum RunnerLevel {
+  BEGINNER = 'BEGINNER',
+  INTERMEDIATE = 'INTERMEDIATE',
+  ELITE = 'ELITE'
+}
+
 export interface AnalysisResult {
   id: string;
   timestamp: string;
@@ -25,6 +31,7 @@ export interface AnalysisResult {
   trainingSteps: string[];
   targetPace?: string; // e.g. "4:00"
   runnerDescription?: string;
+  runnerLevel: RunnerLevel;
 }
 
 export enum AnalysisStatus {
