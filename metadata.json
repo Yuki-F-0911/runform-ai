@@ -1,0 +1,7 @@
+{
+  "name": "RunForm AI - Professional Running Analysis",
+  "description": "Analyze running form from videos to evaluate biomechanics, step variables, and performance improvements using advanced AI.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
