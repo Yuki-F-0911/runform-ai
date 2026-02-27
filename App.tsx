@@ -2,39 +2,83 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AnalysisStatus, AnalysisResult, RunnerLevel } from './types';
 import { analyzeRunningForm } from './services/geminiService';
+import { supabase } from './services/supabaseClient';
+import {
+  uploadVideo,
+  saveAnalysisResult,
+  fetchAnalysisHistory,
+  deleteAnalysisResult,
+  getVideoUrl,
+} from './services/databaseService';
 import MetricsChart from './components/MetricsChart';
+import AuthForm from './components/AuthForm';
+import type { User } from '@supabase/supabase-js';
 
 const App: React.FC = () => {
+  // 認証ステート
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // 解析ステート
   const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [history, setHistory] = useState<AnalysisResult[]>([]);
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Settings for analysis
+  // 解析設定
   const [targetPace, setTargetPace] = useState<string>('');
   const [runnerDesc, setRunnerDesc] = useState<string>('');
   const [runnerLevel, setRunnerLevel] = useState<RunnerLevel>(RunnerLevel.INTERMEDIATE);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+  // 保存状態の表示
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load history on mount
+  // 認証状態の監視
   useEffect(() => {
-    const saved = localStorage.getItem('runform_history');
-    if (saved) {
-      try {
-        setHistory(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to load history", e);
+    // 初期セッション確認
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
+
+    // 認証状態の変更をリッスン
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null);
       }
-    }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Save history when it changes
+  // ユーザーがログインしたら履歴を読み込み
   useEffect(() => {
-    localStorage.setItem('runform_history', JSON.stringify(history));
-  }, [history]);
+    if (user) {
+      loadHistory();
+    } else {
+      setHistory([]);
+    }
+  }, [user]);
+
+  /** Supabase DB から解析履歴を取得する */
+  const loadHistory = async () => {
+    if (!user) return;
+    try {
+      const data = await fetchAnalysisHistory(user.id);
+      setHistory(data);
+    } catch (e) {
+      console.error('履歴の読み込みに失敗:', e);
+      // フォールバック: ローカルストレージ
+      const saved = localStorage.getItem('runform_history');
+      if (saved) {
+        try { setHistory(JSON.parse(saved)); } catch { /* 無視 */ }
+      }
+    }
+  };
 
   const footStrikeMap: Record<string, string> = {
     'Heel': 'ヒール',
@@ -51,20 +95,52 @@ const App: React.FC = () => {
   };
 
   const handleStartAnalysis = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !user) return;
 
     setStatus(AnalysisStatus.ANALYZING);
     setError(null);
+    setSaveStatus(null);
 
     try {
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64String = (reader.result as string).split(',')[1];
         try {
+          // AI解析を実行
           const analysisResult = await analyzeRunningForm(base64String, runnerDesc, targetPace, runnerLevel);
-          setResult(analysisResult);
-          setHistory(prev => [analysisResult, ...prev]);
+
+          // 並行して動画をStorageにアップロード
+          setSaveStatus('動画をアップロード中...');
+          let videoPath: string | undefined;
+          try {
+            videoPath = await uploadVideo(selectedFile, user.id);
+          } catch (uploadErr) {
+            console.warn('動画のアップロードに失敗（解析結果は保存されます）:', uploadErr);
+          }
+
+          // 解析結果にvideoPathを追加
+          const enrichedResult: AnalysisResult = {
+            ...analysisResult,
+            videoPath,
+            userId: user.id,
+          };
+
+          // DBに保存
+          setSaveStatus('解析結果を保存中...');
+          try {
+            await saveAnalysisResult(enrichedResult, user.id, videoPath);
+          } catch (saveErr) {
+            console.warn('DB保存に失敗（ローカルに保持します）:', saveErr);
+          }
+
+          // ローカルストレージにもバックアップ保存
+          const updatedHistory = [enrichedResult, ...history];
+          localStorage.setItem('runform_history', JSON.stringify(updatedHistory));
+
+          setResult(enrichedResult);
+          setHistory(updatedHistory);
           setStatus(AnalysisStatus.COMPLETED);
+          setSaveStatus(null);
         } catch (err) {
           console.error(err);
           setError("AI分析中にエラーが発生しました。");
@@ -78,9 +154,54 @@ const App: React.FC = () => {
     }
   };
 
-  const deleteHistoryItem = (id: string, e: React.MouseEvent) => {
+  const handleDeleteHistoryItem = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setHistory(prev => prev.filter(item => item.id !== id));
+    if (!user) return;
+
+    try {
+      await deleteAnalysisResult(id, user.id);
+    } catch (err) {
+      console.warn('DB削除に失敗:', err);
+    }
+
+    setHistory(prev => {
+      const updated = prev.filter(item => item.id !== id);
+      localStorage.setItem('runform_history', JSON.stringify(updated));
+      return updated;
+    });
+
+    if (result?.id === id) {
+      setResult(null);
+      setStatus(AnalysisStatus.IDLE);
+    }
+  };
+
+  /** 履歴アイテムクリック時に動画URLを取得して結果を表示する */
+  const handleSelectHistoryItem = async (item: AnalysisResult) => {
+    setResult(item);
+    setStatus(AnalysisStatus.COMPLETED);
+
+    // 動画パスがある場合は署名付きURLを取得
+    if (item.videoPath) {
+      try {
+        const url = await getVideoUrl(item.videoPath);
+        setVideoPreview(url);
+      } catch (err) {
+        console.warn('動画URLの取得に失敗:', err);
+        setVideoPreview(null);
+      }
+    } else {
+      setVideoPreview(null);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setHistory([]);
+    setResult(null);
+    setStatus(AnalysisStatus.IDLE);
+    setVideoPreview(null);
   };
 
   const reset = () => {
@@ -89,11 +210,30 @@ const App: React.FC = () => {
     setVideoPreview(null);
     setError(null);
     setSelectedFile(null);
+    setSaveStatus(null);
   };
 
+  // 認証ローディング中
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-slate-800 border-t-green-500 rounded-full animate-spin"></div>
+          <p className="text-slate-500 text-sm">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 未認証: 認証フォームを表示
+  if (!user) {
+    return <AuthForm />;
+  }
+
+  // 認証済み: メインアプリ
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col md:flex-row">
-      {/* Sidebar: History */}
+      {/* サイドバー: 履歴 */}
       <aside className="w-full md:w-72 bg-slate-900 border-r border-slate-800 p-6 overflow-y-auto max-h-screen">
         <div className="flex items-center gap-2 mb-8">
           <i className="fas fa-history text-green-500"></i>
@@ -107,19 +247,22 @@ const App: React.FC = () => {
             history.map(item => (
               <div
                 key={item.id}
-                onClick={() => { setResult(item); setStatus(AnalysisStatus.COMPLETED); }}
+                onClick={() => handleSelectHistoryItem(item)}
                 className={`p-3 rounded-xl border transition-all cursor-pointer group ${result?.id === item.id ? 'bg-green-500/10 border-green-500/50' : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'}`}
               >
                 <div className="flex justify-between items-start mb-1">
                   <span className="text-xs text-slate-400">{new Date(item.timestamp).toLocaleDateString()}</span>
-                  <button onClick={(e) => deleteHistoryItem(item.id, e)} className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={(e) => handleDeleteHistoryItem(item.id, e)} className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">
                     <i className="fas fa-trash-alt text-[10px]"></i>
                   </button>
                 </div>
                 <div className="text-sm font-bold text-white truncate">{item.runnerDescription || 'ランナー'}</div>
                 <div className="flex justify-between items-center mt-2">
                   <span className="text-xs px-2 py-0.5 bg-slate-700 rounded text-slate-300">Score: {item.overallScore}</span>
-                  <span className="text-[10px] text-slate-500">{item.targetPace || '--'} min/km</span>
+                  <div className="flex items-center gap-1">
+                    {item.videoPath && <i className="fas fa-video text-[10px] text-green-500" title="動画あり"></i>}
+                    <span className="text-[10px] text-slate-500">{item.targetPace || '--'} min/km</span>
+                  </div>
                 </div>
               </div>
             ))
@@ -127,7 +270,7 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* メインコンテンツ */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-6 py-8">
           <header className="flex justify-between items-center mb-10">
@@ -137,11 +280,26 @@ const App: React.FC = () => {
               </div>
               <h1 className="text-2xl font-black text-white">RunForm <span className="text-green-500">AI</span></h1>
             </div>
-            {status !== AnalysisStatus.IDLE && (
-              <button onClick={reset} className="text-sm text-slate-400 hover:text-white flex items-center gap-2">
-                <i className="fas fa-plus"></i> 新規解析
-              </button>
-            )}
+            <div className="flex items-center gap-4">
+              {status !== AnalysisStatus.IDLE && (
+                <button onClick={reset} className="text-sm text-slate-400 hover:text-white flex items-center gap-2">
+                  <i className="fas fa-plus"></i> 新規解析
+                </button>
+              )}
+              {/* ユーザー情報 & ログアウト */}
+              <div className="flex items-center gap-3 pl-4 border-l border-slate-800">
+                <span className="text-xs text-slate-500 hidden md:block truncate max-w-[140px]" title={user.email || ''}>
+                  {user.email}
+                </span>
+                <button
+                  onClick={handleLogout}
+                  className="text-sm text-slate-500 hover:text-red-400 transition-colors flex items-center gap-1"
+                  title="ログアウト"
+                >
+                  <i className="fas fa-sign-out-alt"></i>
+                </button>
+              </div>
+            </div>
           </header>
 
           <main>
@@ -151,6 +309,7 @@ const App: React.FC = () => {
                   <i className="fas fa-upload text-2xl text-slate-400"></i>
                 </div>
                 <h2 className="text-xl font-bold mb-2">動画をアップロードして分析</h2>
+                <p className="text-slate-500 text-sm mb-4">動画はクラウドに安全に保存されます</p>
                 <input type="file" accept="video/*" className="hidden" ref={fileInputRef} onChange={onFileSelect} />
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -229,13 +388,28 @@ const App: React.FC = () => {
               <div className="flex flex-col items-center justify-center py-20">
                 <div className="w-16 h-16 border-4 border-slate-800 border-t-green-500 rounded-full animate-spin mb-6"></div>
                 <h2 className="text-xl font-bold mb-1">高度な動作解析を実行中</h2>
-                <p className="text-slate-500 text-sm italic">関節位置の特定とステップ変数を抽出しています...</p>
+                <p className="text-slate-500 text-sm italic">
+                  {saveStatus || '関節位置の特定とステップ変数を抽出しています...'}
+                </p>
+              </div>
+            )}
+
+            {status === AnalysisStatus.ERROR && error && (
+              <div className="flex flex-col items-center justify-center py-20">
+                <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-6">
+                  <i className="fas fa-exclamation-triangle text-2xl text-red-400"></i>
+                </div>
+                <h2 className="text-xl font-bold mb-2 text-red-400">エラーが発生しました</h2>
+                <p className="text-slate-400 text-sm mb-4">{error}</p>
+                <button onClick={reset} className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors">
+                  もう一度試す
+                </button>
               </div>
             )}
 
             {status === AnalysisStatus.COMPLETED && result && (
               <div className="space-y-6 animate-in fade-in duration-700">
-                {/* Result Header Card */}
+                {/* 結果ヘッダーカード */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col md:flex-row gap-6 items-center">
                   <div className="relative">
                     <svg className="w-32 h-32 transform -rotate-90">
@@ -257,6 +431,11 @@ const App: React.FC = () => {
                           {result.targetPace} min/km
                         </span>
                       )}
+                      {result.videoPath && (
+                        <span className="px-3 py-1 bg-purple-500/10 text-purple-500 text-xs font-bold rounded-full border border-purple-500/20">
+                          <i className="fas fa-cloud-check mr-1"></i>クラウド保存済
+                        </span>
+                      )}
                     </div>
                     <h2 className="text-xl font-bold text-white leading-tight">
                       {result.runnerDescription ? `${result.runnerDescription} の解析結果` : 'メインランナーの解析結果'}
@@ -265,7 +444,18 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Metrics Grid */}
+                {/* 動画再生 (保存済みの場合) */}
+                {videoPreview && (
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                    <div className="flex items-center gap-2 px-6 py-3 border-b border-slate-800">
+                      <i className="fas fa-play-circle text-green-500"></i>
+                      <span className="text-sm font-bold text-slate-300">解析動画</span>
+                    </div>
+                    <video src={videoPreview} className="w-full max-h-80 object-contain bg-black" controls />
+                  </div>
+                )}
+
+                {/* メトリクスグリッド */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <MetricCard label="ピッチ" value={`${result.metrics.cadence}`} unit="spm" icon="fa-bolt" />
                   <MetricCard label="ストライド" value={`${result.metrics.strideLength}`} unit="m" icon="fa-arrows-alt-h" />
@@ -295,7 +485,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Training Steps */}
+                {/* 推奨トレーニング */}
                 <div className="bg-green-500/5 border border-green-500/10 rounded-2xl p-6">
                   <h3 className="font-bold mb-4 flex items-center gap-2 text-green-400"><i className="fas fa-dumbbell"></i>推奨トレーニング</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

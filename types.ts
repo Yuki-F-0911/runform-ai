@@ -32,6 +32,8 @@ export interface AnalysisResult {
   targetPace?: string; // e.g. "4:00"
   runnerDescription?: string;
   runnerLevel: RunnerLevel;
+  videoPath?: string;
+  userId?: string;
 }
 
 export enum AnalysisStatus {
