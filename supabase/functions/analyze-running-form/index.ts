@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { videoBase64, runnerDescription, targetPace, level } = await req.json();
+    const { videoBase64, runnerDescription, targetPace, level, historyRecords } = await req.json();
 
     // 環境変数からAPIキーを取得
     const apiKey = Deno.env.get("GEMINI_API_KEY");
@@ -32,6 +32,20 @@ Deno.serve(async (req) => {
     const personInstruction = runnerDescription
       ? `動画内に複数の人がいる可能性があります。特に「${runnerDescription}」という特徴を持つ人物を重点的に分析してください。`
       : "動画内で最も目立っているランナーを分析してください。複数人いる場合はその旨を指摘してください。";
+
+    const historyInstruction = historyRecords && historyRecords.length > 0
+      ? `
+      # 過去の履歴データ（比較対象）
+      過去に分析された同一ランナーのデータが以下の通り存在します。現在の動画（設定ペース: ${targetPace || '不明'}）と過去データを比較し、以下の「パーソナル分析（定数と変数の特定）」を行ってください。
+      ${JSON.stringify(historyRecords.slice(0, 3).map((r: any) => ({ pace: r.targetPace, score: r.overallScore, metrics: r.metrics })), null, 2)}
+      
+      ## パーソナル分析指示
+      1. **定数（personalConstants）の抽出**: ペースに関わらず共通して見られる、根本的な癖や改善点、もしくは長所を抽出してください。
+      2. **変数（paceVariables）の抽出**: ペースの変化（例えばジョグペースからレースペースへの移行時）によって生じるフォームの変化や崩れを特定してください。
+      3. **苦手なペース帯（weakPaceZone）**: データから推測される、フォームが最も崩れやすい・非効率になるペース帯を指摘してください。
+      4. **総合的フィードバック（historicalFeedback）**: 過去からの改善傾向や、ペース変動に伴う全体像を踏まえたアドバイスを行ってください。
+      `
+      : "今回は過去の履歴データが提供されていません。現在の動画のみから最大限の分析を行ってください。";
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -59,6 +73,8 @@ Deno.serve(async (req) => {
               1. ${personInstruction}
               2. ${paceInstruction}
               3. 以下の「評価基準テーブル」を確認用データとして使用し、各項目を評価してください。
+              4. 以下の履歴データを基にパーソナルな洞察（定数・変数等）を分析してください。
+              ${historyInstruction}
 
               # 評価基準データ (Reference Data)
               | カテゴリ | 評価項目 | 理想・適正（Elite） | 修正・NG（Bad） | 定量的指標の目安 |
@@ -86,6 +102,7 @@ Deno.serve(async (req) => {
               - **summary**: コーチング方針に基づいた総合的なフィードバック。
               - **trainingSteps**: コーチング方針に基づいた具体的なトレーニング提案。
               - **overallScore**: 100点満点でのスコア。
+              - **advancedInsights**: （履歴データがある場合特に重要）定数と変数などのパーソナルな洞察。
               
               `
             },
@@ -132,6 +149,16 @@ Deno.serve(async (req) => {
             trainingSteps: {
               type: Type.ARRAY,
               items: { type: Type.STRING }
+            },
+            advancedInsights: {
+              type: Type.OBJECT,
+              properties: {
+                personalConstants: { type: Type.ARRAY, items: { type: Type.STRING }, description: "ペースに関わらず共通する癖や長所" },
+                paceVariables: { type: Type.ARRAY, items: { type: Type.STRING }, description: "ペースによって変化・崩れる要素" },
+                weakPaceZone: { type: Type.STRING, description: "フォームが崩れやすいペース帯（例: 4:30〜5:00 min/km）" },
+                historicalFeedback: { type: Type.STRING, description: "履歴を踏まえた総合的なフィードバック" }
+              },
+              required: ["personalConstants", "paceVariables", "historicalFeedback"]
             }
           },
           required: ["overallScore", "metrics", "observations", "footStrike", "summary", "trainingSteps"]
@@ -149,7 +176,7 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error analyzing running form:", error.message);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

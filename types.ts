@@ -20,6 +20,13 @@ export enum RunnerLevel {
   ELITE = 'ELITE'
 }
 
+export interface AdvancedInsights {
+  personalConstants: string[];
+  paceVariables: string[];
+  weakPaceZone?: string;
+  historicalFeedback?: string;
+}
+
 export interface AnalysisResult {
   id: string;
   timestamp: string;
@@ -34,6 +41,7 @@ export interface AnalysisResult {
   runnerLevel: RunnerLevel;
   videoPath?: string;
   userId?: string;
+  advancedInsights?: AdvancedInsights;
 }
 
 export enum AnalysisStatus {

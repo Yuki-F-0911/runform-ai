@@ -6,10 +6,11 @@ export const analyzeRunningForm = async (
   videoBase64: string,
   runnerDescription: string,
   targetPace: string,
-  level: RunnerLevel
+  level: RunnerLevel,
+  historyRecords: AnalysisResult[] = []
 ): Promise<AnalysisResult> => {
   const { data, error } = await supabase.functions.invoke('analyze-running-form', {
-    body: { videoBase64, runnerDescription, targetPace, level }
+    body: { videoBase64, runnerDescription, targetPace, level, historyRecords }
   });
 
   if (error) {

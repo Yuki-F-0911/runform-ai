@@ -22,6 +22,7 @@ interface DbAnalysisRow {
     runner_level: string;
     video_path: string | null;
     created_at: string;
+    advanced_insights?: object;
 }
 
 /**
@@ -41,6 +42,7 @@ const rowToResult = (row: DbAnalysisRow): AnalysisResult => ({
     runnerLevel: row.runner_level as AnalysisResult['runnerLevel'],
     videoPath: row.video_path || undefined,
     userId: row.user_id,
+    advancedInsights: row.advanced_insights as AnalysisResult['advancedInsights'],
 });
 
 /**
@@ -92,6 +94,7 @@ export const saveAnalysisResult = async (
         runner_description: result.runnerDescription || null,
         runner_level: result.runnerLevel,
         video_path: videoPath || null,
+        advanced_insights: result.advancedInsights || null,
     });
 
     if (error) {

@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AnalysisStatus, AnalysisResult, RunnerLevel } from './types';
+import { AnalysisStatus, AnalysisResult, RunnerLevel, FormObservation } from './types';
 import { analyzeRunningForm } from './services/geminiService';
 import { supabase } from './services/supabaseClient';
 import {
@@ -106,8 +106,8 @@ const App: React.FC = () => {
       reader.onloadend = async () => {
         const base64String = (reader.result as string).split(',')[1];
         try {
-          // AI解析を実行
-          const analysisResult = await analyzeRunningForm(base64String, runnerDesc, targetPace, runnerLevel);
+          // AI解析を実行（過去の履歴情報も送信）
+          const analysisResult = await analyzeRunningForm(base64String, runnerDesc, targetPace, runnerLevel, history);
 
           // 並行して動画をStorageにアップロード
           setSaveStatus('動画をアップロード中...');
@@ -164,8 +164,8 @@ const App: React.FC = () => {
       console.warn('DB削除に失敗:', err);
     }
 
-    setHistory(prev => {
-      const updated = prev.filter(item => item.id !== id);
+    setHistory((prev: AnalysisResult[]) => {
+      const updated = prev.filter((item: AnalysisResult) => item.id !== id);
       localStorage.setItem('runform_history', JSON.stringify(updated));
       return updated;
     });
@@ -253,7 +253,7 @@ const App: React.FC = () => {
               <p className="text-text-muted text-sm tracking-wide">履歴はありません</p>
             </div>
           ) : (
-            history.map(item => (
+            history.map((item: AnalysisResult) => (
               <div
                 key={item.id}
                 onClick={() => handleSelectHistoryItem(item)}
@@ -264,7 +264,7 @@ const App: React.FC = () => {
                 )}
                 <div className="flex justify-between items-start mb-2 pl-1">
                   <span className="text-xs font-mono text-text-muted tracking-wide">{new Date(item.timestamp).toLocaleDateString()}</span>
-                  <button onClick={(e) => handleDeleteHistoryItem(item.id, e)} className="w-6 h-6 rounded-md flex items-center justify-center bg-bg-tertiary text-text-muted hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all">
+                  <button onClick={(e: React.MouseEvent) => handleDeleteHistoryItem(item.id, e)} className="w-6 h-6 rounded-md flex items-center justify-center bg-bg-tertiary text-text-muted hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all">
                     <i className="fas fa-trash-alt text-[10px]"></i>
                   </button>
                 </div>
@@ -363,7 +363,7 @@ const App: React.FC = () => {
                         placeholder="例: 赤いシャツ、右側の走者"
                         className="w-full input-premium py-3 px-4"
                         value={runnerDesc}
-                        onChange={(e) => setRunnerDesc(e.target.value)}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRunnerDesc(e.target.value)}
                       />
                     </div>
                     <div>
@@ -374,7 +374,7 @@ const App: React.FC = () => {
                           placeholder="4:00"
                           className="w-32 input-premium py-3 px-4 font-mono text-center"
                           value={targetPace}
-                          onChange={(e) => setTargetPace(e.target.value)}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargetPace(e.target.value)}
                         />
                         <span className="text-text-muted text-sm font-bold">min / km</span>
                       </div>
@@ -544,7 +544,7 @@ const App: React.FC = () => {
                         <h3 className="font-bold text-white tracking-wide">Action Plan</h3>
                       </div>
                       <div className="space-y-3">
-                        {result.trainingSteps.map((step, idx) => (
+                        {result.trainingSteps.map((step: string, idx: number) => (
                           <div key={idx} className="flex gap-4 p-4 rounded-xl bg-bg-tertiary/30 border border-white/5 hover:bg-bg-tertiary/50 transition-colors">
                             <div className="w-6 h-6 shrink-0 rounded-full bg-accent-primary/20 text-accent-primary font-bold text-xs flex items-center justify-center border border-accent-primary/30">
                               {idx + 1}
@@ -569,6 +569,69 @@ const App: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* パーソナル分析（変数・定数） */}
+                    {result.advancedInsights && (
+                      <div className="neo-card p-6 flex flex-col relative overflow-hidden group">
+                        <div className="absolute right-0 top-0 w-32 h-32 bg-accent-primary/5 rounded-bl-[100px] pointer-events-none"></div>
+                        <h3 className="font-bold mb-1 flex items-center gap-2 text-white">
+                          <i className="fas fa-brain text-accent-primary"></i> Personal AI Insights
+                        </h3>
+                        <p className="text-xs text-text-muted mb-5">過去の履歴と比較した定数と変数の特定</p>
+
+                        <div className="space-y-4">
+                          {/* 総合評価 */}
+                          {result.advancedInsights.historicalFeedback && (
+                            <div className="bg-bg-tertiary/60 p-4 rounded-xl border border-accent-primary/20">
+                              <p className="text-sm text-white leading-relaxed font-medium">
+                                {result.advancedInsights.historicalFeedback}
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* 定数 */}
+                            <div className="bg-black/20 p-4 rounded-xl border border-white/5">
+                              <h4 className="text-xs font-black text-text-muted uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <i className="fas fa-lock text-green-400"></i> 定数 (Constants)
+                              </h4>
+                              <ul className="space-y-2">
+                                {result.advancedInsights.personalConstants?.map((item: string, i: number) => (
+                                  <li key={i} className="text-sm text-text-secondary flex items-start gap-2">
+                                    <span className="text-green-400 text-[10px] mt-1">■</span> {item}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+
+                            {/* 変数 */}
+                            <div className="bg-black/20 p-4 rounded-xl border border-white/5">
+                              <h4 className="text-xs font-black text-text-muted uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <i className="fas fa-random text-yellow-400"></i> 変数 (Variables)
+                              </h4>
+                              <ul className="space-y-2">
+                                {result.advancedInsights.paceVariables?.map((item: string, i: number) => (
+                                  <li key={i} className="text-sm text-text-secondary flex items-start gap-2">
+                                    <span className="text-yellow-400 text-[10px] mt-1">■</span> {item}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+
+                          {/* 苦手ペース */}
+                          {result.advancedInsights.weakPaceZone && (
+                            <div className="flex items-center gap-3 bg-red-400/10 border border-red-500/20 p-3 rounded-xl mt-2">
+                              <i className="fas fa-exclamation-triangle text-red-400 text-sm"></i>
+                              <div>
+                                <span className="text-xs text-red-300 font-bold block">改善が必要なペース帯</span>
+                                <span className="text-sm text-white font-mono">{result.advancedInsights.weakPaceZone}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* 部位別詳細観察 */}
                     <div className="neo-card p-6 flex-1 flex flex-col">
                       <h3 className="font-bold mb-1 flex items-center gap-2 text-white">
@@ -577,7 +640,7 @@ const App: React.FC = () => {
                       <p className="text-xs text-text-muted mb-5">部位別の詳細評価とアドバイス</p>
 
                       <div className="space-y-4 overflow-y-auto pr-2 custom-scrollbar flex-1">
-                        {result.observations.map((obs, idx) => (
+                        {result.observations.map((obs: FormObservation, idx: number) => (
                           <div key={idx} className="bg-bg-tertiary/40 p-5 rounded-xl border border-white/5 hover:border-white/10 transition-colors group">
                             <div className="flex justify-between items-center mb-2">
                               <span className="text-xs font-black text-accent-primary uppercase tracking-widest">{obs.joint}</span>
