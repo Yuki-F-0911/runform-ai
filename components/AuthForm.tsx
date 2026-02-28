@@ -39,29 +39,34 @@ const AuthForm: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-            <div className="w-full max-w-md">
+        <div className="min-h-screen bg-bg-primary flex items-center justify-center p-4 relative overflow-hidden">
+            {/* 背景の装飾オーブ（Craftwork的リッチな背景アプローチ） */}
+            <div className="absolute top-0 left-1/4 w-96 h-96 bg-accent-primary/20 rounded-full blur-[100px] pointer-events-none animate-pulse-glow"></div>
+            <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-accent-secondary/10 rounded-full blur-[120px] pointer-events-none delay-100 animate-pulse-glow"></div>
+
+            <div className="w-full max-w-md animate-fade-in-up relative z-10">
                 {/* ロゴ & タイトル */}
                 <div className="text-center mb-10">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-green-500 rounded-2xl mb-4 shadow-lg shadow-green-500/20">
-                        <i className="fas fa-running text-3xl text-white"></i>
+                    <div className="inline-flex items-center justify-center w-16 h-16 bg-accent-gradient rounded-2xl mb-6 shadow-lg shadow-accent-primary/30 relative">
+                        <div className="absolute inset-0 bg-white/20 rounded-2xl"></div>
+                        <i className="fas fa-running text-3xl text-white relative z-10"></i>
                     </div>
-                    <h1 className="text-3xl font-black text-white">
-                        RunForm <span className="text-green-500">AI</span>
+                    <h1 className="text-4xl font-black text-white tracking-tight mb-2">
+                        RunForm <span className="gradient-text">AI</span>
                     </h1>
-                    <p className="text-slate-500 text-sm mt-2">AIによるランニングフォーム解析</p>
+                    <p className="text-text-secondary text-sm">AIによる高度なランニングフォーム解析</p>
                 </div>
 
-                {/* カード */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8">
+                {/* グラスモーフィズム カード */}
+                <div className="glass-card p-8 relative z-10">
                     {/* モード切替タブ */}
-                    <div className="flex bg-slate-800/50 rounded-xl p-1 mb-8">
+                    <div className="flex bg-bg-primary/50 rounded-xl p-1.5 mb-8 border border-white/5">
                         <button
                             type="button"
                             onClick={() => { setMode('login'); setError(null); setSuccessMessage(null); }}
                             className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${mode === 'login'
-                                    ? 'bg-green-500 text-white shadow-lg shadow-green-500/20'
-                                    : 'text-slate-400 hover:text-white'
+                                    ? 'bg-bg-secondary text-white shadow-md border border-white/10'
+                                    : 'text-text-secondary hover:text-white'
                                 }`}
                         >
                             ログイン
@@ -70,40 +75,40 @@ const AuthForm: React.FC = () => {
                             type="button"
                             onClick={() => { setMode('signup'); setError(null); setSuccessMessage(null); }}
                             className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${mode === 'signup'
-                                    ? 'bg-green-500 text-white shadow-lg shadow-green-500/20'
-                                    : 'text-slate-400 hover:text-white'
+                                    ? 'bg-bg-secondary text-white shadow-md border border-white/10'
+                                    : 'text-text-secondary hover:text-white'
                                 }`}
                         >
                             新規登録
                         </button>
                     </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-5">
+                    <form onSubmit={handleSubmit} className="space-y-6">
                         {/* メール入力 */}
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
+                            <label className="block text-xs font-bold text-text-muted uppercase tracking-wider mb-2">
                                 メールアドレス
                             </label>
                             <div className="relative">
-                                <i className="fas fa-envelope absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 text-sm"></i>
+                                <i className="fas fa-envelope absolute left-4 top-1/2 -translate-y-1/2 text-text-muted text-sm"></i>
                                 <input
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     placeholder="you@example.com"
                                     required
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-11 pr-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500/30 transition-all"
+                                    className="w-full input-premium pl-11 pr-4 py-3.5"
                                 />
                             </div>
                         </div>
 
                         {/* パスワード入力 */}
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
+                            <label className="block text-xs font-bold text-text-muted uppercase tracking-wider mb-2">
                                 パスワード
                             </label>
                             <div className="relative">
-                                <i className="fas fa-lock absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 text-sm"></i>
+                                <i className="fas fa-lock absolute left-4 top-1/2 -translate-y-1/2 text-text-muted text-sm"></i>
                                 <input
                                     type="password"
                                     value={password}
@@ -111,24 +116,24 @@ const AuthForm: React.FC = () => {
                                     placeholder={mode === 'signup' ? '6文字以上' : '••••••••'}
                                     required
                                     minLength={6}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-11 pr-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500/30 transition-all"
+                                    className="w-full input-premium pl-11 pr-4 py-3.5"
                                 />
                             </div>
                         </div>
 
                         {/* エラーメッセージ */}
                         {error && (
-                            <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
-                                <i className="fas fa-exclamation-circle text-red-400 text-sm"></i>
-                                <span className="text-red-400 text-sm">{error}</span>
+                            <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 animate-fade-in-up">
+                                <i className="fas fa-exclamation-circle text-red-500 text-sm"></i>
+                                <span className="text-red-400 text-sm font-medium">{error}</span>
                             </div>
                         )}
 
                         {/* 成功メッセージ */}
                         {successMessage && (
-                            <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-xl px-4 py-3">
-                                <i className="fas fa-check-circle text-green-400 text-sm"></i>
-                                <span className="text-green-400 text-sm">{successMessage}</span>
+                            <div className="flex items-center gap-3 bg-accent-primary/10 border border-accent-primary/20 rounded-xl px-4 py-3 animate-fade-in-up">
+                                <i className="fas fa-check-circle text-accent-primary text-sm"></i>
+                                <span className="text-accent-primary text-sm font-medium">{successMessage}</span>
                             </div>
                         )}
 
@@ -136,22 +141,22 @@ const AuthForm: React.FC = () => {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-4 bg-green-500 hover:bg-green-400 disabled:bg-green-500/50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-2"
+                            className="w-full btn-primary py-4 mt-2 h-14"
                         >
                             {loading ? (
                                 <>
-                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                    処理中...
+                                    <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin"></div>
+                                    <span className="font-bold">処理中...</span>
                                 </>
                             ) : mode === 'login' ? (
                                 <>
-                                    <i className="fas fa-sign-in-alt"></i>
+                                    <i className="fas fa-sign-in-alt mr-1"></i>
                                     ログイン
                                 </>
                             ) : (
                                 <>
-                                    <i className="fas fa-user-plus"></i>
-                                    アカウント作成
+                                    <i className="fas fa-user-plus mr-1"></i>
+                                    アカウントを作成
                                 </>
                             )}
                         </button>
@@ -159,7 +164,7 @@ const AuthForm: React.FC = () => {
                 </div>
 
                 {/* フッター */}
-                <p className="text-center text-slate-600 text-xs mt-6">
+                <p className="text-center text-text-muted text-sm mt-8 animate-fade-in-up delay-100">
                     {mode === 'login'
                         ? 'アカウントをお持ちでない方は「新規登録」タブへ'
                         : '既にアカウントをお持ちの方は「ログイン」タブへ'}

@@ -18,20 +18,26 @@ const MetricsChart: React.FC<MetricsChartProps> = ({ metrics }) => {
   ];
 
   return (
-    <div className="w-full h-64 md:h-80 bg-slate-900/50 rounded-xl border border-slate-800 p-4">
-      <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider">バイオメカニクス特性</h3>
+    <div className="w-full h-full min-h-[250px] flex items-center justify-center">
       <ResponsiveContainer width="100%" height="100%">
-        <RadarChart cx="50%" cy="50%" outerRadius="80%" data={data}>
-          <PolarGrid stroke="#334155" />
-          <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+        <RadarChart cx="50%" cy="50%" outerRadius="75%" data={data}>
+          <PolarGrid stroke="rgba(255, 255, 255, 0.1)" strokeDasharray="3 3" />
+          <PolarAngleAxis dataKey="subject" tick={{ fill: '#8888a0', fontSize: 11, fontWeight: 700 }} />
           <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
           <Radar
             name="RunForm"
             dataKey="value"
-            stroke="#22c55e"
-            fill="#22c55e"
-            fillOpacity={0.6}
+            stroke="#1cd981"
+            strokeWidth={2}
+            fill="url(#radar-gradient)"
+            fillOpacity={1}
           />
+          <defs>
+            <linearGradient id="radar-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#1cd981" stopOpacity={0.6} />
+              <stop offset="100%" stopColor="#0bb36c" stopOpacity={0.1} />
+            </linearGradient>
+          </defs>
         </RadarChart>
       </ResponsiveContainer>
     </div>
