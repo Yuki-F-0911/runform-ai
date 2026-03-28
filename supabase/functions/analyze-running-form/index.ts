@@ -5,7 +5,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 enum RunnerLevel {
   BEGINNER = "初心者",
   INTERMEDIATE = "中級者",
-  ADVANCED = "上級者"
+  ELITE = "上級者"
 }
 
 Deno.serve(async (req) => {
@@ -37,7 +37,12 @@ Deno.serve(async (req) => {
       ? `
       # 過去の履歴データ（比較対象）
       過去に分析された同一ランナーのデータが以下の通り存在します。現在の動画（設定ペース: ${targetPace || '不明'}）と過去データを比較し、以下の「パーソナル分析（定数と変数の特定）」を行ってください。
-      ${JSON.stringify(historyRecords.slice(0, 3).map((r: any) => ({ pace: r.targetPace, score: r.overallScore, metrics: r.metrics })), null, 2)}
+      ${JSON.stringify(historyRecords.slice(0, 3).map((r: any) => ({
+        pace: r.targetPace,
+        score: r.overallScore,
+        metrics: r.metrics,
+        performanceMetrics: r.performanceMetrics,
+      })), null, 2)}
       
       ## パーソナル分析指示
       1. **定数（personalConstants）の抽出**: ペースに関わらず共通して見られる、根本的な癖や改善点、もしくは長所を抽出してください。
@@ -58,7 +63,8 @@ Deno.serve(async (req) => {
               
               # タスクの流れ
               1. **客観的計測フェーズ**: 提供された動画をバイオメカニクスの観点で客観的に分析し、定量的な指標（ピッチ、ストライド、接地時間など）を算出してください。この「数値」は対象ランナーのレベルに関わらず、物理的な事実として同一の基準で計測してください。
-              2. **コーチングフェーズ**: 算出された事実に基づき、以下の「対象ランナーレベル」に合わせたアドバイスを日本語で生成してください。
+              2. **推定フェーズ**: 動画から直接取得できない値（速度、距離、ステップ幅、脚剛性など）は、映像情報・既知のランニング知見・設定ペースから合理的に推定してください。推定値は現実的な範囲に収め、confidence を必ず併記してください。
+              3. **コーチングフェーズ**: 算出された事実に基づき、以下の「対象ランナーレベル」に合わせたアドバイスを日本語で生成してください。
               
               # 対象ランナーレベルとコーチングの方針
               現在の対象レベル: **${level}**
@@ -97,7 +103,10 @@ Deno.serve(async (req) => {
               提供されたJSONスキーマに厳密に従ってください。
               **重要: 全てのテキストフィールド（summary, finding, advice, trainingStepsなど）は必ず日本語で出力してください。**
               
-              - **metrics**: オブジェクトとして、客観的な数値を入力（レベルによる補正なし）。
+              - **metrics**: オブジェクトとして、客観的または合理的推定の数値を入力（レベルによる補正なし）。
+              - **runnerProfile**: その人の特徴量抽出。走速度、推定走行距離、走タイプ、強み、制限因子をまとめてください。
+              - **performanceMetrics**: スプリントやランニングにおける重要定量値。stepFrequency, stepsPerMeter, cadenceReserve, projected100mTime, projected5kTime, accelerationIndex, sprintMechanicalScore, runningEconomyScore, fatigueResistanceScore, dataConfidence を返してください。
+              - **challengeProposals**: 速度・距離・フォーム課題から逆算した具体的な改善課題を 3 件以上返してください。
               - **observations**: 各関節・部位ごとの評価。findingは客観的事実、adviceは上記コーチング方針に基づいたアドバイス。
               - **summary**: コーチング方針に基づいた総合的なフィードバック。
               - **trainingSteps**: コーチング方針に基づいた具体的なトレーニング提案。
@@ -128,9 +137,75 @@ Deno.serve(async (req) => {
                 strideLength: { type: Type.NUMBER, description: "meters" },
                 groundContactTime: { type: Type.NUMBER, description: "ms" },
                 verticalOscillation: { type: Type.NUMBER, description: "cm" },
-                flightTime: { type: Type.NUMBER, description: "ms" }
+                flightTime: { type: Type.NUMBER, description: "ms" },
+                stepTime: { type: Type.NUMBER, description: "ms" },
+                dutyFactor: { type: Type.NUMBER, description: "%" },
+                stepWidth: { type: Type.NUMBER, description: "cm" },
+                strideAngle: { type: Type.NUMBER, description: "degrees" },
+                legStiffness: { type: Type.NUMBER, description: "kN/m" },
+                symmetryScore: { type: Type.NUMBER, description: "0-100" },
+                brakingIndex: { type: Type.NUMBER, description: "0-100" }
               },
-              required: ["cadence", "strideLength", "groundContactTime", "verticalOscillation", "flightTime"]
+              required: [
+                "cadence",
+                "strideLength",
+                "groundContactTime",
+                "verticalOscillation",
+                "flightTime",
+                "stepTime",
+                "dutyFactor",
+                "stepWidth",
+                "strideAngle",
+                "legStiffness",
+                "symmetryScore",
+                "brakingIndex"
+              ]
+            },
+            runnerProfile: {
+              type: Type.OBJECT,
+              properties: {
+                runningType: { type: Type.STRING },
+                estimatedSpeedKmh: { type: Type.NUMBER },
+                estimatedDistanceM: { type: Type.NUMBER },
+                speedBand: { type: Type.STRING },
+                dominantStrengths: { type: Type.ARRAY, items: { type: Type.STRING } },
+                limiterFactors: { type: Type.ARRAY, items: { type: Type.STRING } }
+              },
+              required: [
+                "runningType",
+                "estimatedSpeedKmh",
+                "estimatedDistanceM",
+                "speedBand",
+                "dominantStrengths",
+                "limiterFactors"
+              ]
+            },
+            performanceMetrics: {
+              type: Type.OBJECT,
+              properties: {
+                strideFrequencyHz: { type: Type.NUMBER },
+                stepsPerMeter: { type: Type.NUMBER },
+                cadenceReserve: { type: Type.NUMBER },
+                projected100mTime: { type: Type.NUMBER },
+                projected5kTime: { type: Type.STRING },
+                accelerationIndex: { type: Type.NUMBER },
+                sprintMechanicalScore: { type: Type.NUMBER },
+                runningEconomyScore: { type: Type.NUMBER },
+                fatigueResistanceScore: { type: Type.NUMBER },
+                dataConfidence: { type: Type.NUMBER, description: "0-100" }
+              },
+              required: [
+                "strideFrequencyHz",
+                "stepsPerMeter",
+                "cadenceReserve",
+                "projected100mTime",
+                "projected5kTime",
+                "accelerationIndex",
+                "sprintMechanicalScore",
+                "runningEconomyScore",
+                "fatigueResistanceScore",
+                "dataConfidence"
+              ]
             },
             observations: {
               type: Type.ARRAY,
@@ -150,6 +225,21 @@ Deno.serve(async (req) => {
               type: Type.ARRAY,
               items: { type: Type.STRING }
             },
+            challengeProposals: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  reason: { type: Type.STRING },
+                  targetMetric: { type: Type.STRING },
+                  currentValue: { type: Type.STRING },
+                  targetValue: { type: Type.STRING },
+                  timeframe: { type: Type.STRING }
+                },
+                required: ["title", "reason", "targetMetric", "currentValue", "targetValue", "timeframe"]
+              }
+            },
             advancedInsights: {
               type: Type.OBJECT,
               properties: {
@@ -161,7 +251,17 @@ Deno.serve(async (req) => {
               required: ["personalConstants", "paceVariables", "historicalFeedback"]
             }
           },
-          required: ["overallScore", "metrics", "observations", "footStrike", "summary", "trainingSteps"]
+          required: [
+            "overallScore",
+            "metrics",
+            "runnerProfile",
+            "performanceMetrics",
+            "observations",
+            "footStrike",
+            "summary",
+            "trainingSteps",
+            "challengeProposals"
+          ]
         }
       }
     });

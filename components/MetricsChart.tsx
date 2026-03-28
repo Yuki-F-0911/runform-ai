@@ -8,13 +8,22 @@ interface MetricsChartProps {
 }
 
 const MetricsChart: React.FC<MetricsChartProps> = ({ metrics }) => {
-  // Normalize data for radar chart (mock normalization for display)
+  const cadence = metrics.cadence ?? 0;
+  const strideLength = metrics.strideLength ?? 0;
+  const groundContactTime = metrics.groundContactTime ?? 0;
+  const verticalOscillation = metrics.verticalOscillation ?? 0;
+  const flightTime = metrics.flightTime ?? 0;
+  const symmetryScore = metrics.symmetryScore ?? 0;
+  const brakingIndex = metrics.brakingIndex ?? 0;
+
   const data = [
-    { subject: 'ピッチ', value: Math.min(100, (metrics.cadence / 200) * 100), fullMark: 100 },
-    { subject: 'ストライド', value: Math.min(100, metrics.strideLength * 40), fullMark: 100 },
-    { subject: '接地時間', value: Math.max(0, 100 - (metrics.groundContactTime / 5)), fullMark: 100 },
-    { subject: '上下動', value: Math.max(0, 100 - (metrics.verticalOscillation * 5)), fullMark: 100 },
-    { subject: '滞空時間', value: Math.min(100, (metrics.flightTime / 2)), fullMark: 100 },
+    { subject: 'ピッチ', value: Math.min(100, (cadence / 200) * 100), fullMark: 100 },
+    { subject: 'ストライド', value: Math.min(100, strideLength * 40), fullMark: 100 },
+    { subject: '接地時間', value: Math.max(0, 100 - (groundContactTime / 5)), fullMark: 100 },
+    { subject: '上下動', value: Math.max(0, 100 - (verticalOscillation * 5)), fullMark: 100 },
+    { subject: '滞空時間', value: Math.min(100, flightTime / 2), fullMark: 100 },
+    { subject: '対称性', value: Math.min(100, symmetryScore), fullMark: 100 },
+    { subject: '減速抑制', value: Math.max(0, 100 - brakingIndex), fullMark: 100 },
   ];
 
   return (

@@ -4,7 +4,7 @@
  */
 
 import { supabase } from './supabaseClient';
-import { AnalysisResult } from '../types';
+import { AnalysisResult, VideoStorageProvider } from '../types';
 
 // DB のカラム名（スネークケース）とアプリの型（キャメルケース）のマッピング
 interface DbAnalysisRow {
@@ -23,6 +23,10 @@ interface DbAnalysisRow {
     video_path: string | null;
     created_at: string;
     advanced_insights?: object;
+    video_asset?: object | null;
+    runner_profile?: object | null;
+    performance_metrics?: object | null;
+    challenge_proposals?: object[] | null;
 }
 
 /**
@@ -41,8 +45,19 @@ const rowToResult = (row: DbAnalysisRow): AnalysisResult => ({
     runnerDescription: row.runner_description || undefined,
     runnerLevel: row.runner_level as AnalysisResult['runnerLevel'],
     videoPath: row.video_path || undefined,
+    videoAsset: (row.video_asset as AnalysisResult['videoAsset']) || (
+        row.video_path ? {
+            provider: VideoStorageProvider.SUPABASE,
+            syncStatus: 'UPLOADED',
+            label: 'Supabase Cloud',
+            path: row.video_path,
+        } : undefined
+    ),
     userId: row.user_id,
     advancedInsights: row.advanced_insights as AnalysisResult['advancedInsights'],
+    runnerProfile: row.runner_profile as AnalysisResult['runnerProfile'],
+    performanceMetrics: row.performance_metrics as AnalysisResult['performanceMetrics'],
+    challengeProposals: row.challenge_proposals as AnalysisResult['challengeProposals'],
 });
 
 /**
@@ -80,6 +95,7 @@ export const saveAnalysisResult = async (
     userId: string,
     videoPath?: string
 ): Promise<void> => {
+    const resolvedVideoPath = videoPath || result.videoAsset?.path || result.videoPath || null;
     const { error } = await supabase.from('analysis_results').insert({
         id: result.id,
         user_id: userId,
@@ -93,8 +109,12 @@ export const saveAnalysisResult = async (
         target_pace: result.targetPace || null,
         runner_description: result.runnerDescription || null,
         runner_level: result.runnerLevel,
-        video_path: videoPath || null,
+        video_path: resolvedVideoPath,
         advanced_insights: result.advancedInsights || null,
+        video_asset: result.videoAsset || null,
+        runner_profile: result.runnerProfile || null,
+        performance_metrics: result.performanceMetrics || null,
+        challenge_proposals: result.challengeProposals || null,
     });
 
     if (error) {
