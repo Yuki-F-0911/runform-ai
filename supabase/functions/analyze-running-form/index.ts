@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { GoogleGenAI, Type } from "npm:@google/genai";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
 enum RunnerLevel {
@@ -15,6 +16,30 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const authorization = req.headers.get("Authorization");
+    if (!authorization?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Missing authorization header" }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      });
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Supabase environment variables are not set");
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAnonKey);
+    const accessToken = authorization.replace("Bearer ", "").trim();
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: "Invalid JWT" }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      });
+    }
+
     const { videoBase64, runnerDescription, targetPace, level, historyRecords } = await req.json();
 
     // 環境変数からAPIキーを取得
