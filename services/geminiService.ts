@@ -58,6 +58,12 @@ const extractEdgeFunctionErrorDetail = async (error: unknown): Promise<string | 
         const detail =
           "error" in payload && typeof payload.error === "string"
             ? payload.error
+            : "error" in payload &&
+                typeof payload.error === "object" &&
+                payload.error !== null &&
+                "message" in payload.error &&
+                typeof (payload.error as { message?: unknown }).message === "string"
+              ? (payload.error as { message: string }).message
             : "message" in payload && typeof payload.message === "string"
               ? payload.message
               : null;

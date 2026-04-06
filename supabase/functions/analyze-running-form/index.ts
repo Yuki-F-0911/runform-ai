@@ -18,7 +18,7 @@ const runnerLevelLabelMap: Record<RunnerLevel, string> = {
 const FILE_ACTIVE_TIMEOUT_MS = 8 * 60 * 1000;
 const FILE_POLL_INTERVAL_MS = 5 * 1000;
 const DEFAULT_VIDEO_MIME_TYPE = "video/mp4";
-const ANALYSIS_MODEL = "gemini-2.5-flash";
+const ANALYSIS_MODEL = "gemini-3.1-pro-preview";
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -317,10 +317,7 @@ Deno.serve(async (req) => {
               - **advancedInsights**: （履歴データがある場合特に重要）定数と変数などのパーソナルな洞察。
               
               `
-        ]),
-        config: {
-          responseMimeType: "application/json",
-        }
+        ])
       });
 
       if (!response.text) {
