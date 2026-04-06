@@ -18,7 +18,7 @@ const runnerLevelLabelMap: Record<RunnerLevel, string> = {
 const FILE_ACTIVE_TIMEOUT_MS = 8 * 60 * 1000;
 const FILE_POLL_INTERVAL_MS = 5 * 1000;
 const DEFAULT_VIDEO_MIME_TYPE = "video/mp4";
-const ANALYSIS_MODEL = "gemini-3.1-pro-preview";
+const ANALYSIS_MODEL = "gemini-3-pro-preview";
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
