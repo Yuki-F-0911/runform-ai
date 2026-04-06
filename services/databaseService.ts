@@ -173,6 +173,18 @@ export const deleteAnalysisResult = async (id: string, userId: string): Promise<
 };
 
 /**
+ * Storage 上の動画ファイルを削除する
+ * @param videoPath - Storage 内の動画パス
+ */
+export const deleteVideoByPath = async (videoPath: string): Promise<void> => {
+    const { error } = await supabase.storage.from('videos').remove([videoPath]);
+
+    if (error) {
+        throw new Error(`動画ファイルの削除に失敗しました: ${error.message}`);
+    }
+};
+
+/**
  * ストレージ上の動画の署名付き URL を生成する
  * @param videoPath - Storage 内のファイルパス
  * @returns 一時的にアクセス可能な URL（有効期限: 1時間）
@@ -184,6 +196,23 @@ export const getVideoUrl = async (videoPath: string): Promise<string> => {
 
     if (error) {
         throw new Error(`動画URLの生成に失敗しました: ${error.message}`);
+    }
+
+    return data.signedUrl;
+};
+
+/**
+ * 解析専用の短期署名URLを生成する
+ * @param videoPath - Storage 内の動画パス
+ * @returns 一時的にアクセス可能な URL
+ */
+export const createAnalysisVideoUrl = async (videoPath: string): Promise<string> => {
+    const { data, error } = await supabase.storage
+        .from('videos')
+        .createSignedUrl(videoPath, 900);
+
+    if (error) {
+        throw new Error(`解析用動画URLの生成に失敗しました: ${error.message}`);
     }
 
     return data.signedUrl;

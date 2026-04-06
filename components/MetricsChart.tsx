@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import { StepMetrics } from '../types';
@@ -27,8 +26,8 @@ const MetricsChart: React.FC<MetricsChartProps> = ({ metrics }) => {
   ];
 
   return (
-    <div className="w-full h-full min-h-[250px] flex items-center justify-center">
-      <ResponsiveContainer width="100%" height="100%">
+    <div className="w-full h-full min-h-[250px] min-w-0 flex items-center justify-center">
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={250}>
         <RadarChart cx="50%" cy="50%" outerRadius="75%" data={data}>
           <PolarGrid stroke="rgba(255, 255, 255, 0.1)" strokeDasharray="3 3" />
           <PolarAngleAxis dataKey="subject" tick={{ fill: '#8888a0', fontSize: 11, fontWeight: 700 }} />

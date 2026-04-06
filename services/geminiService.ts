@@ -1,9 +1,11 @@
-
 import { AnalysisResult, RunnerLevel } from "../types";
 import { supabase } from "./supabaseClient";
 
+export const MAX_ANALYSIS_VIDEO_BYTES = 12 * 1024 * 1024;
+const MAX_ANALYSIS_VIDEO_MB = Math.round(MAX_ANALYSIS_VIDEO_BYTES / (1024 * 1024));
+
 interface InvokeAnalyzeParams {
-  videoBase64: string;
+  videoUrl: string;
   runnerDescription: string;
   targetPace: string;
   level: RunnerLevel;
@@ -11,22 +13,109 @@ interface InvokeAnalyzeParams {
   accessToken: string;
 }
 
-const getHttpStatus = (error: unknown): number | null => {
+interface ErrorContextLike {
+  status?: number;
+  clone?: () => ErrorContextLike;
+  json?: () => Promise<unknown>;
+  text?: () => Promise<string>;
+}
+
+const getErrorContext = (error: unknown): ErrorContextLike | null => {
   if (typeof error !== "object" || error === null || !("context" in error)) {
     return null;
   }
 
   const context = (error as { context?: unknown }).context;
-  if (typeof context !== "object" || context === null || !("status" in context)) {
+  if (typeof context !== "object" || context === null) {
     return null;
   }
 
-  const status = (context as { status?: unknown }).status;
-  return typeof status === "number" ? status : null;
+  return context as ErrorContextLike;
+};
+
+const getHttpStatus = (error: unknown): number | null => {
+  const context = getErrorContext(error);
+  if (!context || typeof context.status !== "number") {
+    return null;
+  }
+
+  return context.status;
+};
+
+const extractEdgeFunctionErrorDetail = async (error: unknown): Promise<string | null> => {
+  const context = getErrorContext(error);
+  if (!context) {
+    return null;
+  }
+
+  const response = typeof context.clone === "function" ? context.clone() : context;
+
+  try {
+    if (typeof response.json === "function") {
+      const payload = await response.json();
+      if (typeof payload === "object" && payload !== null) {
+        const detail =
+          "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : "message" in payload && typeof payload.message === "string"
+              ? payload.message
+              : null;
+        if (detail) {
+          return detail;
+        }
+      }
+    }
+  } catch {
+    // Ignore JSON parse failures and fall back to plain text.
+  }
+
+  try {
+    if (typeof response.text === "function") {
+      const detail = (await response.text()).trim();
+      if (detail) {
+        return detail;
+      }
+    }
+  } catch {
+    // Ignore text extraction failures.
+  }
+
+  return null;
+};
+
+const buildAnalyzeErrorMessage = async (error: unknown): Promise<string> => {
+  const status = getHttpStatus(error);
+  const detail = await extractEdgeFunctionErrorDetail(error);
+
+  if (detail?.includes("GEMINI_API_KEY")) {
+    return "Supabase Edge Function に `GEMINI_API_KEY` が設定されていません。Supabase Secrets を設定してください。";
+  }
+
+  if (status === 404) {
+    return "Supabase Edge Function `analyze-running-form` が見つかりません。関数のデプロイ状態を確認してください。";
+  }
+
+  if (status === 413) {
+    return `動画ファイルが大きすぎます。${MAX_ANALYSIS_VIDEO_MB}MB 以下の短い動画で再試行してください。`;
+  }
+
+  if (status === 546) {
+    return `Edge Function の処理上限に達しました。動画サイズか処理量が大きすぎるため、${MAX_ANALYSIS_VIDEO_MB}MB 以下の短い動画にしてください。`;
+  }
+
+  if (detail) {
+    return `AI解析エラー: ${detail}`;
+  }
+
+  if (error instanceof Error) {
+    return `AI解析エラー: ${error.message}`;
+  }
+
+  return "AI解析エラー: Edge Function returned a non-2xx status code";
 };
 
 const invokeAnalyzeRunningForm = async ({
-  videoBase64,
+  videoUrl,
   runnerDescription,
   targetPace,
   level,
@@ -34,7 +123,7 @@ const invokeAnalyzeRunningForm = async ({
   accessToken,
 }: InvokeAnalyzeParams): Promise<AnalysisResult> => {
   const { data, error } = await supabase.functions.invoke("analyze-running-form", {
-    body: { videoBase64, runnerDescription, targetPace, level, historyRecords },
+    body: { videoUrl, runnerDescription, targetPace, level, historyRecords },
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
@@ -52,12 +141,16 @@ const invokeAnalyzeRunningForm = async ({
 };
 
 export const analyzeRunningForm = async (
-  videoBase64: string,
+  videoUrl: string,
   runnerDescription: string,
   targetPace: string,
   level: RunnerLevel,
   historyRecords: AnalysisResult[] = []
 ): Promise<AnalysisResult> => {
+  if (!videoUrl.trim()) {
+    throw new Error("解析対象の動画URLを取得できませんでした。");
+  }
+
   const { data: sessionData } = await supabase.auth.getSession();
   const initialToken = sessionData.session?.access_token;
 
@@ -67,7 +160,7 @@ export const analyzeRunningForm = async (
 
   try {
     const data = await invokeAnalyzeRunningForm({
-      videoBase64,
+      videoUrl,
       runnerDescription,
       targetPace,
       level,
@@ -86,10 +179,7 @@ export const analyzeRunningForm = async (
   } catch (error) {
     const status = getHttpStatus(error);
     if (status !== 401) {
-      if (error instanceof Error) {
-        throw new Error(`AI解析エラー: ${error.message}`);
-      }
-      throw new Error("AI解析エラー: Edge Function returned a non-2xx status code");
+      throw new Error(await buildAnalyzeErrorMessage(error));
     }
 
     const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
@@ -101,7 +191,7 @@ export const analyzeRunningForm = async (
 
     try {
       const retriedData = await invokeAnalyzeRunningForm({
-        videoBase64,
+        videoUrl,
         runnerDescription,
         targetPace,
         level,
@@ -123,10 +213,7 @@ export const analyzeRunningForm = async (
         throw new Error("セッションが切れています。再ログインしてから再試行してください。");
       }
 
-      if (retryError instanceof Error) {
-        throw new Error(`AI解析エラー: ${retryError.message}`);
-      }
-      throw new Error("AI解析エラー: Edge Function returned a non-2xx status code");
+      throw new Error(await buildAnalyzeErrorMessage(retryError));
     }
   }
 };

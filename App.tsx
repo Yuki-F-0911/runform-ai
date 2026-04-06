@@ -3,8 +3,8 @@ import type { User } from '@supabase/supabase-js';
 import AuthForm from './components/AuthForm';
 import MetricsChart from './components/MetricsChart';
 import { supabase } from './services/supabaseClient';
-import { analyzeRunningForm } from './services/geminiService';
-import { deleteAnalysisResult, fetchAnalysisHistory, getVideoUrl, saveAnalysisResult, uploadVideo } from './services/databaseService';
+import { analyzeRunningForm, MAX_ANALYSIS_VIDEO_BYTES } from './services/geminiService';
+import { createAnalysisVideoUrl, deleteAnalysisResult, deleteVideoByPath, fetchAnalysisHistory, getVideoUrl, saveAnalysisResult, uploadVideo } from './services/databaseService';
 import { AnalysisResult, AnalysisStatus, FormObservation, RunnerLevel, VideoAsset, VideoStorageProvider } from './types';
 
 const footStrikeMap: Record<string, string> = { Heel: 'ヒール', Midfoot: 'ミッドフット', Forefoot: 'フォアフット' };
@@ -16,6 +16,7 @@ const storageLabels: Record<VideoStorageProvider, string> = {
 };
 const externalVideoPattern = /\.(mp4|mov|webm|m4v|ogg)(\?.*)?$/i;
 const metricValue = (value?: number, digits = 1): string => value === undefined || Number.isNaN(value) ? '--' : value.toFixed(digits);
+const MAX_ANALYSIS_VIDEO_MB = Math.round(MAX_ANALYSIS_VIDEO_BYTES / (1024 * 1024));
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -70,6 +71,16 @@ const App: React.FC = () => {
   const onFileSelect = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (file.size > MAX_ANALYSIS_VIDEO_BYTES) {
+      setSelectedFile(null);
+      setVideoPreview(null);
+      setError(`動画ファイルが大きすぎます。${MAX_ANALYSIS_VIDEO_MB}MB 以下の短い動画を選択してください。`);
+      setStatus(AnalysisStatus.IDLE);
+      event.target.value = '';
+      return;
+    }
+
     setSelectedFile(file);
     setVideoPreview(URL.createObjectURL(file));
     setError(null);
@@ -100,34 +111,64 @@ const App: React.FC = () => {
 
     setStatus(AnalysisStatus.ANALYZING);
     setError(null);
-    setSaveStatus('AIがステップ変数と走力を解析中...');
+    setSaveStatus('解析用に動画を準備中...');
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        const videoBase64 = (reader.result as string).split(',')[1];
-        const analysis = await analyzeRunningForm(videoBase64, runnerDesc, targetPace, runnerLevel, history);
-        const videoAsset = await resolveVideoAsset(selectedFile, user.id);
-        const enriched: AnalysisResult = { ...analysis, videoPath: videoAsset?.path, videoAsset, userId: user.id };
-        setSaveStatus('解析結果を保存中...');
-        try {
-          await saveAnalysisResult(enriched, user.id, videoAsset?.path);
-        } catch (saveError) {
-          console.warn('DB保存に失敗:', saveError);
-        }
-        const updatedHistory = [enriched, ...history];
-        localStorage.setItem('runform_history', JSON.stringify(updatedHistory));
-        setResult(enriched);
-        setHistory(updatedHistory);
-        setStatus(AnalysisStatus.COMPLETED);
-        setSaveStatus(null);
-      } catch (analysisError) {
-        console.error(analysisError);
-        setError('AI分析中にエラーが発生しました。');
-        setStatus(AnalysisStatus.ERROR);
+    let analysisVideoPath: string | null = null;
+
+    try {
+      analysisVideoPath = await uploadVideo(selectedFile, user.id);
+      const analysisVideoUrl = await createAnalysisVideoUrl(analysisVideoPath);
+
+      setSaveStatus('AIがステップ変数と走力を解析中...');
+      const analysis = await analyzeRunningForm(analysisVideoUrl, runnerDesc, targetPace, runnerLevel, history);
+
+      let videoAsset: VideoAsset | undefined;
+      let persistedVideoPath: string | undefined;
+
+      if (storageProvider === VideoStorageProvider.SUPABASE) {
+        videoAsset = { provider: storageProvider, syncStatus: 'UPLOADED', label: storageLabels[storageProvider], path: analysisVideoPath };
+        persistedVideoPath = analysisVideoPath;
+      } else {
+        videoAsset = await resolveVideoAsset(selectedFile, user.id);
       }
-    };
-    reader.readAsDataURL(selectedFile);
+
+      const enriched: AnalysisResult = { ...analysis, videoPath: persistedVideoPath, videoAsset, userId: user.id };
+      setSaveStatus('解析結果を保存中...');
+      try {
+        await saveAnalysisResult(enriched, user.id, persistedVideoPath);
+      } catch (saveError) {
+        console.warn('DB保存に失敗:', saveError);
+      }
+
+      if (storageProvider !== VideoStorageProvider.SUPABASE && analysisVideoPath) {
+        try {
+          await deleteVideoByPath(analysisVideoPath);
+        } catch (cleanupError) {
+          console.warn('解析用動画の削除に失敗:', cleanupError);
+        }
+      }
+
+      const updatedHistory = [enriched, ...history];
+      localStorage.setItem('runform_history', JSON.stringify(updatedHistory));
+      setResult(enriched);
+      setHistory(updatedHistory);
+      setStatus(AnalysisStatus.COMPLETED);
+      setSaveStatus(null);
+    } catch (analysisError) {
+      console.error(analysisError);
+
+      if (storageProvider !== VideoStorageProvider.SUPABASE && analysisVideoPath) {
+        try {
+          await deleteVideoByPath(analysisVideoPath);
+        } catch (cleanupError) {
+          console.warn('解析失敗後の動画削除に失敗:', cleanupError);
+        }
+      }
+
+      setError(analysisError instanceof Error ? analysisError.message : 'AI分析中にエラーが発生しました。');
+      setStatus(AnalysisStatus.ERROR);
+      setSaveStatus(null);
+    }
   };
 
   const handleDeleteHistoryItem = async (id: string, event: React.MouseEvent): Promise<void> => {
