@@ -1,3 +1,4 @@
+
 import { AnalysisResult, RunnerLevel } from "../types";
 import { supabase } from "./supabaseClient";
 
@@ -101,6 +102,10 @@ const buildAnalyzeErrorMessage = async (error: unknown): Promise<string> => {
 
   if (status === 546) {
     return `Edge Function の処理上限に達しました。動画サイズか処理量が大きすぎるため、${MAX_ANALYSIS_VIDEO_MB}MB 以下の短い動画にしてください。`;
+  }
+
+  if (status === 400 && detail?.includes("INVALID_ARGUMENT")) {
+    return "AI解析エラー: 動画形式または Gemini への入力形式が受け付けられませんでした。iPhone の MOV 動画は MP4 に変換すると通ることがあります。";
   }
 
   if (detail) {

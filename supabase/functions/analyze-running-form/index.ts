@@ -1,5 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { createPartFromUri, FileState, GoogleGenAI, Type } from "npm:@google/genai";
+import { createPartFromUri, createUserContent, FileState, GoogleGenAI } from "npm:@google/genai";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
@@ -18,19 +18,34 @@ const runnerLevelLabelMap: Record<RunnerLevel, string> = {
 const FILE_ACTIVE_TIMEOUT_MS = 8 * 60 * 1000;
 const FILE_POLL_INTERVAL_MS = 5 * 1000;
 const DEFAULT_VIDEO_MIME_TYPE = "video/mp4";
+const ANALYSIS_MODEL = "gemini-2.5-flash";
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+const normalizeGeminiVideoMimeType = (mimeType: string): string => {
+  const normalizedMimeType = mimeType.toLowerCase();
+
+  if (normalizedMimeType === "video/quicktime") return "video/mov";
+  if (normalizedMimeType === "video/x-msvideo") return "video/avi";
+  if (normalizedMimeType === "video/x-ms-wmv") return "video/wmv";
+  if (normalizedMimeType === "video/3gp") return "video/3gpp";
+
+  return mimeType;
+};
+
 const resolveVideoMimeType = (contentType: string | null, videoUrl: string): string => {
   if (contentType?.startsWith("video/")) {
-    return contentType;
+    return normalizeGeminiVideoMimeType(contentType);
   }
 
   const lowerUrl = videoUrl.toLowerCase();
   if (lowerUrl.endsWith(".mov")) return "video/mov";
   if (lowerUrl.endsWith(".webm")) return "video/webm";
   if (lowerUrl.endsWith(".avi")) return "video/avi";
+  if (lowerUrl.endsWith(".wmv")) return "video/wmv";
+  if (lowerUrl.endsWith(".flv")) return "video/x-flv";
+  if (lowerUrl.endsWith(".3gp")) return "video/3gpp";
   if (lowerUrl.endsWith(".mpeg") || lowerUrl.endsWith(".mpg")) return "video/mpeg";
 
   return DEFAULT_VIDEO_MIME_TYPE;
@@ -57,6 +72,26 @@ const waitForUploadedFile = async (
   }
 
   throw new Error("Gemini の動画前処理がタイムアウトしました。より短い動画で再試行してください。");
+};
+
+const extractJsonPayload = (rawText: string): string => {
+  const trimmed = rawText.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+
+  const fencedJsonMatch = trimmed.match(/```json\s*([\s\S]+?)\s*```/i);
+  if (fencedJsonMatch) {
+    return fencedJsonMatch[1].trim();
+  }
+
+  const firstBraceIndex = trimmed.indexOf("{");
+  const lastBraceIndex = trimmed.lastIndexOf("}");
+  if (firstBraceIndex >= 0 && lastBraceIndex > firstBraceIndex) {
+    return trimmed.slice(firstBraceIndex, lastBraceIndex + 1);
+  }
+
+  throw new Error("AI の返答から JSON を抽出できませんでした。");
 };
 
 Deno.serve(async (req) => {
@@ -155,12 +190,13 @@ Deno.serve(async (req) => {
       const activeFile = await waitForUploadedFile(ai, uploadedFile.name);
 
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            parts: [
-              {
-                text: `
+        model: ANALYSIS_MODEL,
+        contents: createUserContent([
+          createPartFromUri(
+            activeFile.uri,
+            normalizeGeminiVideoMimeType(activeFile.mimeType),
+          ),
+          `
               あなたは、バイオメカニクスと運動生理学を専門とする「世界トップクラスのランニングフォーム解析エキスパート」です。
               
               # タスクの流れ
@@ -202,8 +238,73 @@ Deno.serve(async (req) => {
               | 接地準備 | リトラクション | 接地直前に足を後ろへ引き戻す | 膝を伸ばしたまま遠くへ着地 | Active Landing：対地速度ゼロ |
 
               # 出力要件（JSON）
-              提供されたJSONスキーマに厳密に従ってください。
-              **重要: 全てのテキストフィールド（summary, finding, advice, trainingStepsなど）は必ず日本語で出力してください。**
+              単一の JSON オブジェクトのみを返してください。Markdown のコードブロック、前置き、補足説明は不要です。
+              **重要: 全てのテキストフィールド（summary, finding, advice, trainingSteps など）は必ず日本語で出力してください。**
+              JSON の shape は以下です。
+              {
+                "overallScore": number,
+                "metrics": {
+                  "cadence": number,
+                  "strideLength": number,
+                  "groundContactTime": number,
+                  "verticalOscillation": number,
+                  "flightTime": number,
+                  "stepTime": number,
+                  "dutyFactor": number,
+                  "stepWidth": number,
+                  "strideAngle": number,
+                  "legStiffness": number,
+                  "symmetryScore": number,
+                  "brakingIndex": number
+                },
+                "runnerProfile": {
+                  "runningType": string,
+                  "estimatedSpeedKmh": number,
+                  "estimatedDistanceM": number,
+                  "speedBand": string,
+                  "dominantStrengths": string[],
+                  "limiterFactors": string[]
+                },
+                "performanceMetrics": {
+                  "strideFrequencyHz": number,
+                  "stepsPerMeter": number,
+                  "cadenceReserve": number,
+                  "projected100mTime": number,
+                  "projected5kTime": string,
+                  "accelerationIndex": number,
+                  "sprintMechanicalScore": number,
+                  "runningEconomyScore": number,
+                  "fatigueResistanceScore": number,
+                  "dataConfidence": number
+                },
+                "observations": [
+                  {
+                    "joint": string,
+                    "finding": string,
+                    "score": number,
+                    "advice": string
+                  }
+                ],
+                "footStrike": "Heel" | "Midfoot" | "Forefoot",
+                "summary": string,
+                "trainingSteps": string[],
+                "challengeProposals": [
+                  {
+                    "title": string,
+                    "reason": string,
+                    "targetMetric": string,
+                    "currentValue": string,
+                    "targetValue": string,
+                    "timeframe": string
+                  }
+                ],
+                "advancedInsights": {
+                  "personalConstants": string[],
+                  "paceVariables": string[],
+                  "weakPaceZone": string,
+                  "historicalFeedback": string
+                }
+              }
               
               - **metrics**: オブジェクトとして、客観的または合理的推定の数値を入力（レベルによる補正なし）。
               - **runnerProfile**: その人の特徴量抽出。走速度、推定走行距離、走タイプ、強み、制限因子をまとめてください。
@@ -216,150 +317,9 @@ Deno.serve(async (req) => {
               - **advancedInsights**: （履歴データがある場合特に重要）定数と変数などのパーソナルな洞察。
               
               `
-              },
-              createPartFromUri(activeFile.uri, activeFile.mimeType),
-            ]
-          }
-        ],
+        ]),
         config: {
           responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              overallScore: { type: Type.NUMBER },
-              metrics: {
-                type: Type.OBJECT,
-                properties: {
-                  cadence: { type: Type.NUMBER, description: "spm" },
-                  strideLength: { type: Type.NUMBER, description: "meters" },
-                  groundContactTime: { type: Type.NUMBER, description: "ms" },
-                  verticalOscillation: { type: Type.NUMBER, description: "cm" },
-                  flightTime: { type: Type.NUMBER, description: "ms" },
-                  stepTime: { type: Type.NUMBER, description: "ms" },
-                  dutyFactor: { type: Type.NUMBER, description: "%" },
-                  stepWidth: { type: Type.NUMBER, description: "cm" },
-                  strideAngle: { type: Type.NUMBER, description: "degrees" },
-                  legStiffness: { type: Type.NUMBER, description: "kN/m" },
-                  symmetryScore: { type: Type.NUMBER, description: "0-100" },
-                  brakingIndex: { type: Type.NUMBER, description: "0-100" }
-                },
-                required: [
-                  "cadence",
-                  "strideLength",
-                  "groundContactTime",
-                  "verticalOscillation",
-                  "flightTime",
-                  "stepTime",
-                  "dutyFactor",
-                  "stepWidth",
-                  "strideAngle",
-                  "legStiffness",
-                  "symmetryScore",
-                  "brakingIndex"
-                ]
-              },
-              runnerProfile: {
-                type: Type.OBJECT,
-                properties: {
-                  runningType: { type: Type.STRING },
-                  estimatedSpeedKmh: { type: Type.NUMBER },
-                  estimatedDistanceM: { type: Type.NUMBER },
-                  speedBand: { type: Type.STRING },
-                  dominantStrengths: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  limiterFactors: { type: Type.ARRAY, items: { type: Type.STRING } }
-                },
-                required: [
-                  "runningType",
-                  "estimatedSpeedKmh",
-                  "estimatedDistanceM",
-                  "speedBand",
-                  "dominantStrengths",
-                  "limiterFactors"
-                ]
-              },
-              performanceMetrics: {
-                type: Type.OBJECT,
-                properties: {
-                  strideFrequencyHz: { type: Type.NUMBER },
-                  stepsPerMeter: { type: Type.NUMBER },
-                  cadenceReserve: { type: Type.NUMBER },
-                  projected100mTime: { type: Type.NUMBER },
-                  projected5kTime: { type: Type.STRING },
-                  accelerationIndex: { type: Type.NUMBER },
-                  sprintMechanicalScore: { type: Type.NUMBER },
-                  runningEconomyScore: { type: Type.NUMBER },
-                  fatigueResistanceScore: { type: Type.NUMBER },
-                  dataConfidence: { type: Type.NUMBER, description: "0-100" }
-                },
-                required: [
-                  "strideFrequencyHz",
-                  "stepsPerMeter",
-                  "cadenceReserve",
-                  "projected100mTime",
-                  "projected5kTime",
-                  "accelerationIndex",
-                  "sprintMechanicalScore",
-                  "runningEconomyScore",
-                  "fatigueResistanceScore",
-                  "dataConfidence"
-                ]
-              },
-              observations: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    joint: { type: Type.STRING },
-                    finding: { type: Type.STRING },
-                    score: { type: Type.NUMBER },
-                    advice: { type: Type.STRING }
-                  }
-                }
-              },
-              footStrike: { type: Type.STRING, enum: ["Heel", "Midfoot", "Forefoot"] },
-              summary: { type: Type.STRING },
-              trainingSteps: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              },
-              challengeProposals: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING },
-                    reason: { type: Type.STRING },
-                    targetMetric: { type: Type.STRING },
-                    currentValue: { type: Type.STRING },
-                    targetValue: { type: Type.STRING },
-                    timeframe: { type: Type.STRING }
-                  },
-                  required: ["title", "reason", "targetMetric", "currentValue", "targetValue", "timeframe"]
-                }
-              },
-              advancedInsights: {
-                type: Type.OBJECT,
-                properties: {
-                  personalConstants: { type: Type.ARRAY, items: { type: Type.STRING }, description: "ペースに関わらず共通する癖や長所" },
-                  paceVariables: { type: Type.ARRAY, items: { type: Type.STRING }, description: "ペースによって変化・崩れる要素" },
-                  weakPaceZone: { type: Type.STRING, description: "フォームが崩れやすいペース帯（例: 4:30〜5:00 min/km）" },
-                  historicalFeedback: { type: Type.STRING, description: "履歴を踏まえた総合的なフィードバック" }
-                },
-                required: ["personalConstants", "paceVariables", "historicalFeedback"]
-              }
-            },
-            required: [
-              "overallScore",
-              "metrics",
-              "runnerProfile",
-              "performanceMetrics",
-              "observations",
-              "footStrike",
-              "summary",
-              "trainingSteps",
-              "challengeProposals"
-            ]
-          }
         }
       });
 
@@ -367,7 +327,7 @@ Deno.serve(async (req) => {
         throw new Error("AIから分析結果を受け取れませんでした。");
       }
 
-      const data = JSON.parse(response.text);
+      const data = JSON.parse(extractJsonPayload(response.text));
 
       return new Response(JSON.stringify(data), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
