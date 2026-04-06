@@ -1,5 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { createPartFromUri, createUserContent, FileState, GoogleGenAI } from "npm:@google/genai";
+import { FileState, GoogleGenAI } from "npm:@google/genai";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
@@ -18,7 +18,12 @@ const runnerLevelLabelMap: Record<RunnerLevel, string> = {
 const FILE_ACTIVE_TIMEOUT_MS = 8 * 60 * 1000;
 const FILE_POLL_INTERVAL_MS = 5 * 1000;
 const DEFAULT_VIDEO_MIME_TYPE = "video/mp4";
-const ANALYSIS_MODEL = "gemini-3-pro-preview";
+const ANALYSIS_MODEL_CANDIDATES = [
+  "gemini-3.1-pro-preview",
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+] as const;
+const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -92,6 +97,83 @@ const extractJsonPayload = (rawText: string): string => {
   }
 
   throw new Error("AI の返答から JSON を抽出できませんでした。");
+};
+
+const extractTextFromGeminiResponse = (payload: unknown): string => {
+  if (typeof payload !== "object" || payload === null || !("candidates" in payload)) {
+    throw new Error("Gemini のレスポンス形式が想定外でした。");
+  }
+
+  const candidates = (payload as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    throw new Error("Gemini から候補レスポンスを受け取れませんでした。");
+  }
+
+  const parts = (candidates[0] as { content?: { parts?: Array<{ text?: string }> } }).content?.parts;
+  if (!Array.isArray(parts)) {
+    throw new Error("Gemini のレスポンス本文を取得できませんでした。");
+  }
+
+  const text = parts
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .join("")
+    .trim();
+
+  if (!text) {
+    throw new Error("Gemini のレスポンス本文が空でした。");
+  }
+
+  return text;
+};
+
+const generateVideoAnalysis = async (
+  apiKey: string,
+  fileUri: string,
+  mimeType: string,
+  prompt: string,
+): Promise<string> => {
+  const failures: string[] = [];
+
+  for (const model of ANALYSIS_MODEL_CANDIDATES) {
+    const response = await fetch(`${GEMINI_API_BASE_URL}/${model}:generateContent`, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                file_data: {
+                  mime_type: mimeType,
+                  file_uri: fileUri,
+                },
+              },
+              {
+                text: prompt,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (response.ok) {
+      const payload = await response.json();
+      return extractTextFromGeminiResponse(payload);
+    }
+
+    const detail = (await response.text()).trim();
+    failures.push(`${model}: ${detail || `HTTP ${response.status}`}`);
+
+    if (response.status !== 400) {
+      break;
+    }
+  }
+
+  throw new Error(`Gemini request failed. ${failures.join(" | ")}`);
 };
 
 Deno.serve(async (req) => {
@@ -189,14 +271,11 @@ Deno.serve(async (req) => {
     try {
       const activeFile = await waitForUploadedFile(ai, uploadedFile.name);
 
-      const response = await ai.models.generateContent({
-        model: ANALYSIS_MODEL,
-        contents: createUserContent([
-          createPartFromUri(
-            activeFile.uri,
-            normalizeGeminiVideoMimeType(activeFile.mimeType),
-          ),
-          `
+      const responseText = await generateVideoAnalysis(
+        apiKey,
+        activeFile.uri,
+        normalizeGeminiVideoMimeType(activeFile.mimeType),
+        `
               あなたは、バイオメカニクスと運動生理学を専門とする「世界トップクラスのランニングフォーム解析エキスパート」です。
               
               # タスクの流れ
@@ -317,14 +396,9 @@ Deno.serve(async (req) => {
               - **advancedInsights**: （履歴データがある場合特に重要）定数と変数などのパーソナルな洞察。
               
               `
-        ])
-      });
+      );
 
-      if (!response.text) {
-        throw new Error("AIから分析結果を受け取れませんでした。");
-      }
-
-      const data = JSON.parse(extractJsonPayload(response.text));
+      const data = JSON.parse(extractJsonPayload(responseText));
 
       return new Response(JSON.stringify(data), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
